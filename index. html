@@ -31,7 +31,7 @@ export default function App() {
   // Page State
   const [isLandingPage, setIsLandingPage] = useState(true);
 
-  // App State
+  // App Stat
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
