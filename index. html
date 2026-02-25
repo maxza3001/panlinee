@@ -1,0 +1,426 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Search, BookOpen, Volume2, Play, Pause, RotateCcw, 
+  X, Moon, Sun, Bookmark, BookmarkCheck, Share2, Info, ChevronRight, ChevronDown, ListFilter,
+  Landmark, MapPin, Phone, Printer, Mail, Clock, ArrowRight, Megaphone
+} from 'lucide-react';
+
+// ==========================================
+// ⚙️ ตั้งค่าระบบ (Configuration)
+// ==========================================
+
+const GOOGLE_SHEET_ID = '1Qx87R1oQd6m55H2R2hP1wFz3Y9_ZgO-QjJ8J4x5K6vM'; 
+
+const CATEGORIES = [
+  "📋 การจัดซื้อจัดจ้างและการบริหารพัสดุภาครัฐ",
+  "💻 New GFMIS Thai",
+  "💰 เงินเดือน ค่าจ้าง บำเหน็จ บำนาญ",
+  "💵 การเบิกจ่ายเงินจากคลัง การเก็บรักษาเงิน และการนำเงินส่งคลัง",
+  "✈️ ค่าใช้จ่ายในการเดินทางไปราชการ",
+  "📚 ค่าใช้จ่ายในการอบรม",
+  "🏥 สวัสดิการรักษาพยาบาล",
+  "👨‍👩‍👧 สวัสดิการเกี่ยวกับการศึกษาบุตร",
+  "🏠 ค่าเช่าบ้านข้าราชการ",
+  "💼 ค่าใช้จ่ายในการบริหารงาน",
+  "📌 อื่น ๆ"
+];
+
+const DEFAULT_CATEGORY = "📌 อื่น ๆ";
+
+export default function App() {
+  // Page State
+  const [isLandingPage, setIsLandingPage] = useState(true);
+
+  // App State
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [bookmarks, setBookmarks] = useState(() => JSON.parse(localStorage.getItem('bookmarks') || '[]'));
+  
+  // Web Speech API State
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [currentReadingId, setCurrentReadingId] = useState(null);
+  const speechRef = useRef(null);
+
+  // Fetch Data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const url = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const text = await response.text();
+        const jsonData = JSON.parse(text.substring(47).slice(0, -2));
+        const rows = jsonData.table.rows;
+        
+        const formattedData = rows.map((row, index) => {
+          const rawCategory = row.c[2]?.v || '';
+          const category = CATEGORIES.includes(rawCategory.trim()) 
+            ? rawCategory.trim() 
+            : DEFAULT_CATEGORY;
+            
+          return {
+            id: row.c[3]?.v?.toString() || `id-${index}`,
+            question: row.c[4]?.v || '',
+            answer: row.c[5]?.v || '',
+            category: category,
+            updatedAt: 'อัปเดตล่าสุดจากระบบ',
+          };
+        }).filter(item => item.question !== '');
+        
+        setData(formattedData.length > 0 ? formattedData : getMockData());
+        setLoading(false);
+      } catch (err) {
+        setData(getMockData());
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  function getMockData() {
+    return [
+      { id: '1', question: 'ตัวอย่าง: ค่าเช่าบ้านข้าราชการ เบิกได้สูงสุดเท่าไหร่?', answer: 'สิทธิการเบิกค่าเช่าบ้านข้าราชการ ขึ้นอยู่กับระดับตำแหน่งและเงินเดือน ตามอัตราที่กระทรวงการคลังกำหนด', category: '🏠 ค่าเช่าบ้านข้าราชการ', updatedAt: '25/02/2026' },
+      { id: '2', question: 'ตัวอย่าง: การจัดซื้อพัสดุวงเงินไม่เกิน 500,000 บาท ใช้วิธีใด?', answer: 'ใช้วิธีเฉพาะเจาะจง ตามระเบียบกระทรวงการคลังฯ พ.ศ. 2560', category: '📋 การจัดซื้อจัดจ้างและการบริหารพัสดุภาครัฐ', updatedAt: '20/02/2026' }
+    ];
+  }
+
+  // Dark Mode
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
+
+  // Filters & Counts
+  const filteredData = useMemo(() => {
+    return data.filter(item => {
+      const matchSearch = item.question.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          item.answer.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchCategory = selectedCategory === 'All' || 
+                            (selectedCategory === 'Bookmarks' ? bookmarks.includes(item.id) : item.category === selectedCategory);
+      return matchSearch && matchCategory;
+    });
+  }, [data, searchTerm, selectedCategory, bookmarks]);
+
+  const categoryCounts = useMemo(() => {
+    const counts = { 'All': data.length, 'Bookmarks': bookmarks.length };
+    CATEGORIES.forEach(cat => counts[cat] = 0);
+    data.forEach(item => { if (counts[item.category] !== undefined) counts[item.category]++; });
+    return counts;
+  }, [data, bookmarks]);
+
+  const toggleBookmark = (id, e) => {
+    if(e) e.stopPropagation();
+    const newBkmk = bookmarks.includes(id) ? bookmarks.filter(b => b !== id) : [...bookmarks, id];
+    setBookmarks(newBkmk);
+    localStorage.setItem('bookmarks', JSON.stringify(newBkmk));
+  };
+
+  // 🔊 ระบบอ่านออกเสียง
+  const initSpeech = (text, id = null) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'th-TH';
+    utterance.rate = 1.0;
+    
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      setIsPaused(false);
+      setCurrentReadingId(id);
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setIsPaused(false);
+      setCurrentReadingId(null);
+    };
+
+    speechRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleToggleSpeech = (item, e) => {
+    if(e) e.stopPropagation();
+    const text = `คำถาม: ${item.question}. คำตอบ: ${item.answer}`;
+
+    if (currentReadingId === item.id) {
+      if (isPaused) {
+        window.speechSynthesis.resume();
+        setIsPaused(false);
+      } else {
+        window.speechSynthesis.pause();
+        setIsPaused(true);
+      }
+    } else {
+      initSpeech(text, item.id);
+    }
+  };
+
+  const stopSpeech = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+    setIsPaused(false);
+    setCurrentReadingId(null);
+  };
+
+  const handleWelcomeSpeech = () => {
+    initSpeech("ยินดีต้อนรับเข้าสู่ คลังปัญญาดี แหล่งความรู้ที่พูดได้ สำนักงานคลังจังหวัดสกลนคร");
+  };
+
+  // ==========================================
+  // 🌟 หน้าจอ Landing Page (หน้าแรก)
+  // ==========================================
+  if (isLandingPage) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center p-6 ${darkMode ? 'bg-slate-900' : 'bg-[#ccebfd]'}`}>
+        
+        {/* Toggle Dark Mode in Landing Page (Optional, hidden in screenshot but good for UX) */}
+        <button onClick={() => setDarkMode(!darkMode)} className="absolute top-4 right-4 p-2 rounded-full bg-white/30 hover:bg-white/50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 transition-colors">
+          {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+
+        {/* Logo Card */}
+        <div className={`w-40 h-40 md:w-48 md:h-48 rounded-3xl shadow-lg flex items-center justify-center mb-8 overflow-hidden border-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-white'}`}>
+          {/* ❗ หากมีลิงก์รูปภาพโลโก้จริง สามารถนำมาใส่ที่ src ด้านล่างได้เลย 
+            ตัวอย่าง: <img src="https://yourwebsite.com/logo.png" alt="Logo" className="w-full h-full object-contain p-2" />
+          */}
+          <Landmark size={80} className={`opacity-80 ${darkMode ? 'text-blue-400' : 'text-blue-900'}`} />
+          {/* ลบแท็ก Landmark ด้านบนทิ้ง หากใส่แท็ก img ด้านล่างแล้ว */}
+          {/* <img src="ใส่ลิงก์รูปตรงนี้" alt="Logo" className="w-full h-full object-contain p-4" /> */}
+        </div>
+
+        {/* Titles */}
+        <div className="text-center space-y-3 mb-10">
+          <h1 className={`text-2xl md:text-3xl font-bold ${darkMode ? 'text-slate-200' : 'text-[#1a365d]'}`}>
+            ยินดีต้อนรับเข้าสู่ 🎉
+          </h1>
+          <h2 className={`text-4xl md:text-5xl font-black tracking-tight ${darkMode ? 'text-blue-400' : 'text-[#0f4a7c]'}`}>
+            คลังปัญญาดี
+          </h2>
+          <p className={`text-lg md:text-xl font-medium mt-4 ${darkMode ? 'text-slate-400' : 'text-[#3b6b91]'}`}>
+            แหล่งความรู้ที่พูดได้
+          </p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col items-center gap-5 w-full max-w-xs">
+          {/* Sound Button */}
+          <button 
+            onClick={handleWelcomeSpeech}
+            className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl border-[3px] font-bold text-lg shadow-sm transition-all active:scale-95
+              ${darkMode ? 'bg-slate-800 border-blue-500 text-blue-400 hover:bg-slate-700' : 'bg-white border-[#1f4287] text-[#1f4287] hover:bg-blue-50'}`}
+          >
+            <Volume2 size={24} className={isSpeaking && !currentReadingId ? "animate-pulse" : ""} />
+            <span>👉 คลิกเพื่อฟังเสียง 👈</span>
+          </button>
+
+          {/* Start Button */}
+          <button 
+            onClick={() => {
+              setIsLandingPage(false);
+              stopSpeech();
+            }}
+            className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl bg-[#22a3e6] hover:bg-[#1a8bc7] text-white font-bold text-xl shadow-lg transition-all active:scale-95"
+          >
+            <ArrowRight size={24} />
+            <span>เริ่มใช้งาน</span>
+          </button>
+        </div>
+
+        {/* Footer Info */}
+        <div className={`mt-16 w-full max-w-sm flex flex-col items-center gap-2 text-sm ${darkMode ? 'text-slate-400' : 'text-[#6c8ba4]'}`}>
+          <div className="flex items-center gap-2 font-bold mb-1 text-base">
+            <Landmark size={18} />
+            <span>สำนักงานคลังจังหวัดสกลนคร</span>
+          </div>
+          <div className="flex items-center gap-2 w-full pl-8">
+            <MapPin size={16} className="opacity-70" /> <span>ศาลากลางจังหวัดสกลนคร</span>
+          </div>
+          <div className="flex items-center gap-2 w-full pl-8">
+            <Phone size={16} className="opacity-70" /> <span>โทรศัพท์: 0-4271-1405</span>
+          </div>
+          <div className="flex items-center gap-2 w-full pl-8">
+            <Printer size={16} className="opacity-70" /> <span>โทรสาร: 0-4271-3371</span>
+          </div>
+          <div className="flex items-center gap-2 w-full pl-8">
+            <Mail size={16} className="opacity-70" /> 
+            <span>E-Mail: <a href="mailto:SKN@CGD.GO.TH" className="underline hover:text-blue-500">SKN@CGD.GO.TH</a></span>
+          </div>
+          <div className="flex items-center gap-2 w-full pl-8">
+            <Clock size={16} className="opacity-70" /> <span>เวลาทำการ: วันจันทร์ - วันศุกร์</span>
+          </div>
+        </div>
+
+      </div>
+    );
+  }
+
+  // ==========================================
+  // 🌟 หน้าจอหลัก Application
+  // ==========================================
+  return (
+    <div className={`min-h-screen ${darkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'} transition-colors duration-300`}>
+      {/* Navbar */}
+      <nav className={`${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-[#0f4a7c] border-[#0a3860]'} text-white sticky top-0 z-40 shadow-lg px-4 py-3`}>
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => {setSearchTerm(''); setSelectedCategory('All'); stopSpeech();}}>
+            <div className="bg-white p-2 rounded-xl text-[#0f4a7c] shadow-sm"><BookOpen size={24} /></div>
+            <div>
+              <h1 className="text-xl font-bold leading-none">คลังปัญญาดี</h1>
+              <p className="text-[10px] text-blue-200 uppercase tracking-wider mt-1">สำนักงานคลังจังหวัดสกลนคร</p>
+            </div>
+          </div>
+          <button onClick={() => setDarkMode(!darkMode)} className="p-2.5 rounded-full hover:bg-white/10 transition-colors">
+            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-4xl mx-auto px-4 py-8">
+        {/* Search and Category Filter Section */}
+        <div className="space-y-4 mb-8">
+          <div className="relative group">
+            <input 
+              type="text" 
+              placeholder="ค้นหาเรื่องที่สงสัย..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className={`w-full pl-12 pr-4 py-4 rounded-2xl border-2 transition-all outline-none text-lg shadow-sm
+                ${darkMode ? 'bg-slate-800 border-slate-700 focus:border-blue-500' : 'bg-white border-slate-200 focus:border-[#22a3e6]'}`}
+            />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#22a3e6] transition-colors" size={24} />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <ListFilter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+              <select 
+                value={selectedCategory}
+                onChange={(e) => {setSelectedCategory(e.target.value); stopSpeech();}}
+                className={`w-full pl-11 pr-10 py-3.5 rounded-2xl border-2 appearance-none cursor-pointer outline-none transition-all font-medium
+                  ${darkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-slate-200 hover:border-slate-300'}`}
+              >
+                <option value="All">🌐 แสดงทุกหมวดหมู่ ({categoryCounts['All']})</option>
+                <option value="Bookmarks">⭐ รายการที่บันทึกไว้ ({categoryCounts['Bookmarks']})</option>
+                <hr className="my-1" />
+                {CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{cat} ({categoryCounts[cat] || 0})</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+            </div>
+            
+            <button 
+              onClick={() => {setSearchTerm(''); setSelectedCategory('All'); stopSpeech();}}
+              className={`px-6 py-3.5 rounded-2xl font-bold transition-all border-2
+                ${darkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-200 border-slate-200 hover:bg-slate-300 text-slate-700'}`}
+            >
+              ล้างค่า
+            </button>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        {loading ? (
+          <div className="text-center py-20 animate-pulse">
+            <div className="w-12 h-12 bg-[#22a3e6] rounded-full mx-auto mb-4 animate-bounce"></div>
+            <p className="text-slate-500 font-medium">กำลังเตรียมข้อมูล...</p>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {filteredData.map(item => (
+              <div 
+                key={item.id}
+                onClick={() => setSelectedItem(item)}
+                className={`p-5 rounded-3xl border-2 transition-all cursor-pointer shadow-sm hover:shadow-md active:scale-[0.99] group
+                  ${darkMode ? 'bg-slate-800 border-slate-700 hover:border-blue-500' : 'bg-white border-slate-200 hover:border-[#22a3e6]'}`}
+              >
+                <div className="flex justify-between items-start gap-4 mb-3">
+                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg uppercase tracking-wider
+                    ${darkMode ? 'bg-blue-900/40 text-blue-300' : 'bg-blue-50 text-[#0f4a7c]'}`}>
+                    {item.category}
+                  </span>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={(e) => handleToggleSpeech(item, e)}
+                      className={`p-2 rounded-full transition-all ${currentReadingId === item.id ? 'bg-[#22a3e6] text-white animate-pulse' : 'bg-slate-100 dark:bg-slate-700 text-slate-400 hover:text-[#22a3e6]'}`}
+                      title="อ่านออกเสียง"
+                    >
+                      {currentReadingId === item.id && !isPaused ? <Pause size={18} fill="currentColor" /> : <Volume2 size={18} />}
+                    </button>
+                    <button onClick={(e) => toggleBookmark(item.id, e)} className={bookmarks.includes(item.id) ? 'text-amber-500' : 'text-slate-300'}>
+                      <Bookmark size={20} fill={bookmarks.includes(item.id) ? "currentColor" : "none"} />
+                    </button>
+                  </div>
+                </div>
+                <h3 className="text-lg font-bold leading-snug mb-2 group-hover:text-[#0f4a7c] dark:group-hover:text-blue-400 transition-colors">{item.question}</h3>
+                <p className={`text-sm line-clamp-2 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{item.answer}</p>
+                <div className="mt-4 pt-4 border-t border-dashed border-slate-200 dark:border-slate-700 flex justify-between items-center text-[11px] text-slate-400">
+                   <div className="flex items-center gap-1">
+                     <Info size={12} />
+                     <span>ข้อมูลฐานข้อมูลคลังปัญญาดี</span>
+                   </div>
+                   <span className="flex items-center text-[#22a3e6] font-bold group-hover:translate-x-1 transition-transform">เปิดอ่าน <ChevronRight size={14} /></span>
+                </div>
+              </div>
+            ))}
+            {filteredData.length === 0 && (
+              <div className="text-center py-20 opacity-40">
+                <Search size={64} className="mx-auto mb-4" />
+                <p className="text-xl font-bold">ไม่พบข้อมูลที่ต้องการ</p>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Modal */}
+      {selectedItem && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm" onClick={() => {setSelectedItem(null); stopSpeech();}}></div>
+          <div className={`relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col transition-all transform
+            ${darkMode ? 'bg-slate-800' : 'bg-white'}`}>
+            <div className="flex justify-between items-center p-5 border-b dark:border-slate-700">
+              <span className="text-xs font-bold text-[#22a3e6]">{selectedItem.category}</span>
+              <button onClick={() => {setSelectedItem(null); stopSpeech();}} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <h2 className="text-2xl font-black mb-6 leading-tight text-[#0f4a7c] dark:text-white">{selectedItem.question}</h2>
+              <div className={`text-lg leading-relaxed whitespace-pre-wrap ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>{selectedItem.answer}</div>
+              <div className="mt-8 text-xs text-slate-500 italic">แหล่งข้อมูล: ฐานข้อมูลคลังปัญญาดี</div>
+            </div>
+            <div className={`p-6 border-t dark:border-slate-700 ${darkMode ? 'bg-slate-900/50' : 'bg-[#eef8ff]'}`}>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-[#22a3e6] font-bold"><Volume2 size={20} /> ระบบช่วยอ่านออกเสียง</div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => handleToggleSpeech(selectedItem)}
+                    className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-white shadow-lg active:scale-95 transition-all
+                    ${currentReadingId === selectedItem.id && !isPaused ? 'bg-amber-500 shadow-amber-500/30' : 'bg-[#22a3e6] shadow-[#22a3e6]/30'}`}
+                  >
+                    {currentReadingId === selectedItem.id && !isPaused ? <><Pause size={20} fill="currentColor" /> หยุดพัก</> : <><Play size={20} fill="currentColor" /> {isPaused ? 'เล่นต่อ' : 'เริ่มอ่าน'}</>}
+                  </button>
+                  <button 
+                    onClick={() => initSpeech(`คำถาม: ${selectedItem.question}. คำตอบ: ${selectedItem.answer}`, selectedItem.id)}
+                    className="p-4 rounded-2xl border-2 border-[#bae0f5] dark:border-slate-600 text-[#22a3e6] hover:bg-white transition-colors"
+                  >
+                    <RotateCcw size={20} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
